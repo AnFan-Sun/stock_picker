@@ -3,6 +3,11 @@
 # 功能：MA5上穿MA10 + MACD金叉 + 涨幅3%~5% + 换手率10%左右
 # ============================================================
 
+# 禁用代理，避免系统代理导致网络请求失败
+import os
+os.environ['NO_PROXY'] = '*'
+os.environ['no_proxy'] = '*'
+
 import akshare as ak
 import pandas as pd
 import numpy as np
@@ -31,11 +36,11 @@ def get_stock_list(max_retries=3):
     """
     logger.info("正在获取全市场股票列表...")
 
-    # 获取沪深A股列表（带重试）
+    # 获取沪深A股列表（带重试）- 使用腾讯数据源
     df = None
     for attempt in range(max_retries):
         try:
-            df = ak.stock_zh_a_spot_em()
+            df = ak.stock_zh_a_spot_tx()
             if df is not None and len(df) > 0:
                 break
         except Exception as e:
@@ -48,22 +53,36 @@ def get_stock_list(max_retries=3):
     if df is None or len(df) == 0:
         raise ValueError("获取股票列表失败")
 
-    # 重命名列（akshare 列名可能随版本变化，这里做兼容）
+    # 先删掉原来的turnover列（成交额，和我们要的换手率重名）
+    if "turnover" in df.columns:
+        df = df.drop(columns=["turnover"])
+
+    # 重命名列
     col_map = {
-        "代码": "code",
-        "名称": "name",
-        "最新价": "price",
-        "涨跌幅": "change_pct",
-        "换手率": "turnover",
-        "总市值": "total_market_cap",
+        "code": "code_full",  # 带sh/sz前缀的完整代码
+        "name": "name",
+        "zxj": "price",
+        "zdf": "change_pct",
+        "hsl": "turnover",  # 换手率
     }
     df = df.rename(columns=col_map)
+
+    # 提取纯数字代码（去掉sh/sz前缀）
+    df["code"] = df["code_full"].str[2:]
 
     # 确保关键列存在
     required_cols = ["code", "name", "price", "change_pct", "turnover"]
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"数据列 {col} 不存在，请检查 akshare 版本或接口变更")
+
+    # 转换为数值类型
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+    df["change_pct"] = pd.to_numeric(df["change_pct"], errors="coerce")
+    df["turnover"] = pd.to_numeric(df["turnover"], errors="coerce")
+
+    # 去掉空值
+    df = df.dropna(subset=["price", "change_pct", "turnover"])
 
     total_count = len(df)
     logger.info(f"获取到 {total_count} 只股票")
@@ -158,7 +177,7 @@ def check_macd_golden_cross(df_hist, fast=12, slow=26, signal=9, lookback_days=5
 # ============================================================
 # 4. 获取单只股票历史K线
 # ============================================================
-def get_stock_history(code, days=60, max_retries=2):
+def get_stock_history(code, days=60, max_retries=3):
     """
     获取单只股票近 days 天的日K线数据
     返回：DataFrame，包含 date, open, close, high, low, volume 等
@@ -167,39 +186,31 @@ def get_stock_history(code, days=60, max_retries=2):
     end_date = datetime.now().strftime("%Y%m%d")
     start_date = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
 
+    # 构造腾讯格式的股票代码（带sh/sz前缀）
+    if code.startswith("6"):
+        tx_code = f"sh{code}"
+    else:
+        tx_code = f"sz{code}"
+
     for attempt in range(max_retries):
         try:
-            df = ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
+            # 使用腾讯数据源
+            df = ak.stock_zh_a_hist_tx(
+                symbol=tx_code,
                 start_date=start_date,
                 end_date=end_date,
-                adjust="qfq",  # 前复权
             )
 
             if df is None or len(df) == 0:
                 if attempt < max_retries - 1:
-                    time.sleep(0.3)
+                    time.sleep(1)
                     continue
                 return None
 
-            # 重命名列
-            col_map = {
-                "日期": "date",
-                "开盘": "open",
-                "收盘": "close",
-                "最高": "high",
-                "最低": "low",
-                "成交量": "volume",
-                "成交额": "amount",
-                "换手率": "turnover",
-                "涨跌幅": "change_pct",
-            }
-            df = df.rename(columns=col_map)
-
+            # 确保关键列存在
             if "close" not in df.columns:
                 if attempt < max_retries - 1:
-                    time.sleep(0.3)
+                    time.sleep(1)
                     continue
                 return None
 
@@ -209,7 +220,7 @@ def get_stock_history(code, days=60, max_retries=2):
         except Exception as e:
             if attempt < max_retries - 1:
                 logger.debug(f"获取 {code} 历史数据第 {attempt+1} 次失败，重试中: {e}")
-                time.sleep(0.3)
+                time.sleep(1)
             else:
                 logger.warning(f"获取 {code} 历史数据失败（重试 {max_retries} 次）: {e}")
                 return None
