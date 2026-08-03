@@ -17,9 +17,6 @@ from stock_picker import (
     get_stock_history,
     calc_ma,
     calc_macd,
-)
-from backtest import (
-    backtest_stock,
     calc_kdj,
     calc_volume_ma,
 )
@@ -294,33 +291,6 @@ def api_kline(code):
 
     except Exception as e:
         logger.error(f"K线API出错 {code}: {e}", exc_info=True)
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-# ============================================================
-# API: 回测
-# ============================================================
-@app.route("/api/backtest", methods=["POST"])
-def api_backtest():
-    """执行回测"""
-    try:
-        data = request.get_json()
-        code = data.get("code", "")
-        days = int(data.get("days", 250))
-        initial_capital = float(data.get("initial_capital", 100000))
-
-        if not code:
-            return jsonify({"success": False, "error": "股票代码不能为空"}), 400
-
-        result = backtest_stock(code, days=days, initial_capital=initial_capital)
-
-        if "error" in result:
-            return jsonify({"success": False, "error": result["error"]}), 500
-
-        return jsonify({"success": True, "data": result})
-
-    except Exception as e:
-        logger.error(f"回测API出错: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 

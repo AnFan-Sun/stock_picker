@@ -143,6 +143,26 @@ def calc_macd(close, fast=12, slow=26, signal=9):
     return dif, dea, macd_hist
 
 
+def calc_kdj(high, low, close, n=9, m1=3, m2=3):
+    """计算KDJ指标"""
+    lowest_low = low.rolling(window=n, min_periods=1).min()
+    highest_high = high.rolling(window=n, min_periods=1).max()
+    
+    rsv = (close - lowest_low) / (highest_high - lowest_low) * 100
+    rsv = rsv.fillna(50)
+    
+    k = rsv.ewm(com=m1 - 1, adjust=False).mean()
+    d = k.ewm(com=m2 - 1, adjust=False).mean()
+    j = 3 * k - 2 * d
+    
+    return k, d, j
+
+
+def calc_volume_ma(volume, period=5):
+    """计算成交量均线"""
+    return volume.rolling(window=period, min_periods=period).mean()
+
+
 # ============================================================
 # 3. 判断金叉条件
 # ============================================================
